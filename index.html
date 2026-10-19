@@ -196,6 +196,7 @@ hr.s{border:0;border-top:1px solid var(--line);margin:4px 0}
   <select id="projSel" aria-label="Chantier"></select>
   <button class="btn" data-act="newProject" title="Nouveau chantier"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg><span class="hide-sm">Chantier</span></button>
   <div class="spacer"></div>
+  <button class="btn ghost" data-act="dir" title="Répertoire des intervenants"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg><span class="hide-sm">Répertoire</span></button>
   <button class="btn ghost" data-act="settings" title="Réglages et sauvegarde"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="hide-sm">Réglages</span></button>
 </div></header>
 
@@ -247,6 +248,16 @@ async function loadAll(){
   }
   try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 }
+const MAIL_DEF={subject:"{code} – {chantier} – PV de chantier {mission} – {pv} du {date}",body:"Bonjour,\n\nVeuillez trouver ci-joint le {pv} de la visite de chantier du {date} ({code} – {chantier}, {adresse}).\n\nMerci de prendre connaissance des points qui vous concernent.\n\nBien cordialement,\n\n{signature}"};
+function migrate(st){
+  st.contacts=st.contacts||[];st.settings.mail=st.settings.mail||{...MAIL_DEF};
+  for(const p of st.projects){p.intervenants=(p.intervenants||[]).map(x=>{if(x.contactId)return x;
+    const em=(x.email||"").trim().toLowerCase(),nm=(x.name||"").trim().toLowerCase();
+    let c=st.contacts.find(c=>(em&&(c.email||"").trim().toLowerCase()===em)||(!em&&nm&&(c.name||"").trim().toLowerCase()===nm));
+    if(!c){c={id:uid(),civ:x.civ||"",name:x.name||"",fonction:x.fonction||"",tel:x.tel||"",email:x.email||""};st.contacts.push(c)}
+    return{id:x.id,contactId:c.id,role:x.role||"",diffusion:x.diffusion!==false}});
+    p.pvs.forEach(v=>{v.sent=v.sent||[]})}
+  return st}
 function blankState(){return{schema:"pv-chantier/1",settings:{company:{name:"",subtitle:"",address:"",tel:"",email:"",vat:""},logoId:null,coverId:null,showLegend:true},projects:[],currentProjectId:null}}
 async function dataURLtoBlob(d){return (await fetch(d)).blob()}
 const blobToDataURL=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(b)});
@@ -296,6 +307,10 @@ function statusAt(pt,i){let s=null;for(const l of pt.statusLog)if(l.pv<=i&&(!s||
 function prevStatus(pt,i){return pt.pvCreated>=i?null:statusAt(pt,i-1)}
 function visiblePoints(p,i){return p.points.filter(pt=>pt.pvCreated<=i&&!(pt.pvCreated<i&&statusAt(pt,i-1)==="Levé")).sort((a,b)=>a.pvCreated-b.pvCreated||a.seq-b.seq)}
 function touched(pt,i){return pt.pvCreated===i||pt.entries.some(e=>e.pv===i)||pt.statusLog.some(l=>l.pv===i&&pt.pvCreated!==i&&l.status!==prevStatus(pt,i))}
+const contact=id=>S.state.contacts.find(c=>c.id===id)||{civ:"",name:"(contact supprimé)",fonction:"",tel:"",email:""};
+function ivs(p){return p.intervenants.map(x=>({...contact(x.contactId),...x}))}
+function usage(cid){return S.state.projects.filter(p=>p.intervenants.some(x=>x.contactId===cid))}
+function fill(t,p,pv){const c=S.state.settings.company;const map={code:p.code,chantier:p.name,mission:(p.mission||"").toLowerCase(),pv:pvLabel(pv.idx),date:frDate(pv.date),adresse:p.address,signature:[c.name,c.subtitle,c.tel,c.email].filter(Boolean).join("\n")};return String(t||"").replace(/\{(\w+)\}/g,(m,k)=>k in map?map[k]:m)}
 function roles(p){const r=[];p.intervenants.forEach(x=>{if(x.role&&!r.includes(x.role))r.push(x.role)});return r}
 function setStatus(pt,i,st){pt.statusLog=pt.statusLog.filter(l=>l.pv!==i);if(pt.pvCreated===i||st!==statusAt(pt,i-1))pt.statusLog.push({pv:i,status:st})}
 function fileBase(p,pv){return `${p.code} - ${p.name} - ${(p.mission||"").toLowerCase()} - ${pvLabel(pv.idx)}`.replace(/[\\/:*?"<>|]/g,"")}
@@ -313,6 +328,7 @@ function render(){
   const st=S.state;const sel=$("#projSel");
   $("#brandLogo").src=st.settings.logoId&&url(st.settings.logoId)||$("#brandLogo").src;
   sel.innerHTML=st.projects.map(p=>`<option value="${p.id}" ${p.id===st.currentProjectId?"selected":""}>${esc(p.code)} – ${esc(p.name)}</option>`).join("")||`<option>Aucun chantier</option>`;
+  if(S.view.tab==="dir"){$("#phead").innerHTML=`<div class="phead"><div><button class="btn sm ghost" data-act="tab" data-k="pv" style="padding-left:0">← Retour au chantier</button></div><div class="code">Tous les chantiers</div><h1>Répertoire des intervenants</h1></div>`;$("#main").innerHTML=renderDir();return}
   const p=P();
   if(!p){$("#phead").innerHTML="";$("#main").innerHTML=`<div class="empty"><p>Aucun chantier pour l'instant.</p><button class="btn primary" data-act="newProject">Créer un chantier</button></div>`;return}
   const t=S.view.tab;
@@ -342,7 +358,7 @@ function renderPV(p){
 
   <section class="blk"><header><span class="n">2</span><h2>Présences</h2><span class="spacer"></span><button class="btn sm ghost" data-act="tab" data-k="int">Gérer les intervenants</button></header>
   <div class="tblwrap"><table class="t"><thead><tr><th>Nom</th><th>Rôle</th><th class="hide-sm">Fonction</th><th>Présence</th></tr></thead><tbody>
-  ${p.intervenants.map(x=>`<tr><td>${esc(x.civ)} ${esc(x.name)}</td><td class="role">${esc(x.role)}</td><td class="hide-sm muted">${esc(x.fonction)}</td><td><select id="pr-${x.id}" data-ed="presence" data-id="${x.id}" ${ed?"":"disabled"}>${PRESENCES.map(o=>`<option ${(pv.presence[x.id]||"—")===o?"selected":""}>${o}</option>`).join("")}</select></td></tr>`).join("")||`<tr><td colspan="4" class="muted">Aucun intervenant.</td></tr>`}
+  ${ivs(p).map(x=>`<tr><td>${esc(x.civ)} ${esc(x.name)}</td><td class="role">${esc(x.role)}</td><td class="hide-sm muted">${esc(x.fonction)}</td><td><select id="pr-${x.id}" data-ed="presence" data-id="${x.id}" ${ed?"":"disabled"}>${PRESENCES.map(o=>`<option ${(pv.presence[x.id]||"—")===o?"selected":""}>${o}</option>`).join("")}</select></td></tr>`).join("")||`<tr><td colspan="4" class="muted">Aucun intervenant.</td></tr>`}
   </tbody></table></div></section>
 
   <section class="blk"><header><span class="n">3</span><h2>Avancement chantier</h2></header><div class="in"><textarea id="pvav" data-ed="pvf" data-f="avancement" ${ed?"":"disabled"} placeholder="État d'avancement constaté">${esc(pv.avancement)}</textarea></div></section>
@@ -428,10 +444,32 @@ function afterPlans(p){
 }
 
 function renderInt(p){
-  return `<section class="blk"><header><h2>Intervenants du chantier</h2><span class="spacer"></span><button class="btn sm primary" data-act="addInt">+ Intervenant</button></header>
-  <div class="tblwrap"><table class="t"><thead><tr><th>Civilité</th><th>Nom</th><th>Rôle</th><th>Fonction</th><th>Téléphone</th><th>Email</th><th></th></tr></thead><tbody>
-  ${p.intervenants.map(x=>`<tr>${[["civ",80],["name",170],["role",80],["fonction",150],["tel",140],["email",220]].map(([f,w])=>`<td><input type="text" style="min-width:${w}px" id="in-${x.id}-${f}" value="${esc(x[f])}" data-ed="int" data-id="${x.id}" data-f="${f}"></td>`).join("")}<td><button class="btn sm ghost danger" data-act="delInt" data-id="${x.id}">Retirer</button></td></tr>`).join("")}
-  </tbody></table></div><div class="in"><p class="small muted" style="margin:0">Le rôle (STAB, MO, ARCHI, ENT, ENT-GO, BC…) sert pour la colonne « Charge » des observations.</p></div></section>`;
+  const avail=S.state.contacts.filter(c=>!p.intervenants.some(x=>x.contactId===c.id)).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  return `<section class="blk"><header><h2>Intervenants du chantier</h2><span class="spacer"></span><button class="btn sm" data-act="newContact" data-add="1">+ Nouveau contact</button></header>
+  <div class="in" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="addc" style="flex:1 1 260px;max-width:460px"><option value="">Ajouter depuis le répertoire…</option>${avail.map(c=>`<option value="${c.id}">${esc(c.name)}${c.fonction?" – "+esc(c.fonction):""}</option>`).join("")}</select><button class="btn sm primary" data-act="linkContact">Ajouter au chantier</button></div>
+  <div class="tblwrap"><table class="t"><thead><tr><th>Intervenant</th><th>Rôle</th><th>Coordonnées</th><th></th></tr></thead><tbody>
+  ${ivs(p).map(x=>`<tr><td><b>${esc(x.civ)} ${esc(x.name)}</b><div class="small muted">${esc(x.fonction)}</div></td>
+   <td><input type="text" style="width:90px" id="ir-${x.id}" value="${esc(x.role)}" data-ed="irole" data-id="${x.id}"></td>
+   <td class="small">${esc(x.email)||'<span class="muted">pas d\'email</span>'}<div class="muted">${esc(x.tel)}</div></td>
+   <td style="white-space:nowrap"><button class="btn sm ghost" data-act="editContact" data-cid="${x.contactId}">Modifier</button><button class="btn sm ghost danger" data-act="delInt" data-id="${x.id}">Retirer</button></td></tr>`).join("")||`<tr><td colspan="4" class="muted">Aucun intervenant.</td></tr>`}
+  </tbody></table></div><div class="in"><p class="small muted" style="margin:0">Le rôle (STAB, MO, ARCHI, ENT, BC…) est propre à ce chantier et alimente la colonne « Charge ». Les coordonnées viennent du répertoire : une modification s'applique à tous les chantiers.</p></div></section>`;
+}
+function renderDir(){
+  const q=(S.view.dirq||"").toLowerCase();const list=S.state.contacts.filter(c=>!q||[c.name,c.fonction,c.email,c.tel].join(" ").toLowerCase().includes(q)).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  return `<section class="blk"><header><input type="text" id="dirq" placeholder="Rechercher un nom, une société, un email…" value="${esc(S.view.dirq||"")}" data-ed="dirq" style="flex:1 1 240px;max-width:420px"><span class="spacer"></span><button class="btn sm primary" data-act="newContact">+ Nouveau contact</button></header>
+  <div class="tblwrap"><table class="t"><thead><tr><th>Nom</th><th>Société / fonction</th><th>Téléphone</th><th>Email</th><th>Chantiers</th><th></th></tr></thead><tbody id="dirbody">
+  ${list.map(c=>{const u=usage(c.id);return`<tr><td><b>${esc(c.civ)} ${esc(c.name)}</b></td><td>${esc(c.fonction)}</td><td class="small">${esc(c.tel)}</td><td class="small">${esc(c.email)}</td><td class="small muted">${u.map(p=>esc(p.code)).join(", ")||"—"}</td>
+   <td style="white-space:nowrap"><button class="btn sm ghost" data-act="editContact" data-cid="${c.id}">Modifier</button><button class="btn sm ghost danger" data-act="delContact" data-cid="${c.id}" ${u.length?'disabled title="Utilisé dans un chantier"':""}>Supprimer</button></td></tr>`}).join("")||`<tr><td colspan="6" class="muted">${q?"Aucun contact ne correspond.":"Le répertoire est vide."}</td></tr>`}
+  </tbody></table></div></section>`;
+}
+function contactForm(c,onSave){
+  modal(`<h3>${c?"Modifier le contact":"Nouveau contact"}</h3><div class="grid2">
+   ${[["civ","Civilité (Mme, M., Mr…)"],["name","Nom et prénom"],["fonction","Société / fonction"],["tel","Téléphone"],["email","Email"]].map(([f,l])=>`<label class="f">${l}<input type="${f==="email"?"email":f==="tel"?"tel":"text"}" id="cf-${f}" value="${esc(c?c[f]:"")}"></label>`).join("")}</div>
+   ${c&&usage(c.id).length>1?`<p class="small muted" style="margin:0">Ce contact figure dans ${usage(c.id).length} chantiers : la modification s'applique partout.</p>`:""}
+   <div class="acts"><button class="btn" data-x="0">Annuler</button><button class="btn primary" data-x="1">Enregistrer</button></div>`,(box,close)=>{
+   box.querySelector('[data-x="0"]').onclick=close;
+   box.querySelector('[data-x="1"]').onclick=()=>{const v={};["civ","name","fonction","tel","email"].forEach(f=>v[f]=box.querySelector("#cf-"+f).value.trim());if(!v.name){box.querySelector("#cf-name").focus();return}
+     let t=c;if(t)Object.assign(t,v);else{t={id:uid(),...v};S.state.contacts.push(t)}save();close();onSave&&onSave(t);render()}});
 }
 function renderInfo(p){
   return `<section class="blk"><header><h2>Fiche chantier</h2></header><div class="in grid2">
@@ -475,8 +513,12 @@ document.addEventListener("click",async e=>{
   case"unpin":pt.pin=null;save();render();break;
   case"renamePlan":{const pl=p.plans.find(x=>x.id===S.view.planId);modal(`<h3>Renommer le plan</h3><label class="f">Nom<input type="text" id="rnp" value="${esc(pl.name)}"></label><div class="acts"><button class="btn" data-x="0">Annuler</button><button class="btn primary" data-x="1">Enregistrer</button></div>`,(box,close)=>{box.querySelector('[data-x="0"]').onclick=close;box.querySelector('[data-x="1"]').onclick=()=>{pl.name=box.querySelector("#rnp").value.trim()||pl.name;save();close();render()}});break}
   case"delPlan":{const pl=p.plans.find(x=>x.id===S.view.planId);const n=p.points.filter(t=>t.pin&&t.pin.planId===pl.id).length;if(await confirmBox("Supprimer le plan",`« ${esc(pl.name)} » sera supprimé${n?` et ${n} repère(s) retiré(s) des points`:""}.`,"Supprimer",true)){p.points.forEach(t=>{if(t.pin&&t.pin.planId===pl.id)t.pin=null});p.plans=p.plans.filter(x=>x!==pl);delBlob(pl.imageId);S.view.planId=null;save();render()}break}
-  case"addInt":p.intervenants.push({id:uid(),civ:"",name:"",role:"ENT",fonction:"",tel:"",email:""});save();render();break;
-  case"delInt":{const x=p.intervenants.find(y=>y.id===b.dataset.id);if(await confirmBox("Retirer l'intervenant",`${esc(x.name)||"Cet intervenant"} n'apparaîtra plus dans les présences.`,"Retirer",true)){p.intervenants=p.intervenants.filter(y=>y!==x);save();render()}break}
+  case"dir":S.view.tab="dir";S.view.placing=null;render();scrollTo(0,0);break;
+  case"newContact":contactForm(null,b.dataset.add&&p?(c=>{p.intervenants.push({id:uid(),contactId:c.id,role:"ENT",diffusion:!!c.email})}):null);break;
+  case"editContact":contactForm(S.state.contacts.find(c=>c.id===b.dataset.cid));break;
+  case"delContact":{const c=S.state.contacts.find(x=>x.id===b.dataset.cid);if(await confirmBox("Supprimer le contact",`${esc(c.name)} sera retiré du répertoire.`,"Supprimer",true)){S.state.contacts=S.state.contacts.filter(x=>x!==c);save();render()}break}
+  case"linkContact":{const id=$("#addc").value;if(!id){$("#addc").focus();return}const c=contact(id);p.intervenants.push({id:uid(),contactId:id,role:"ENT",diffusion:!!c.email});const l=lastPv(p);if(l&&l.status==="draft")l.presence[p.intervenants.at(-1).id]="—";save();render();break}
+  case"delInt":{const x=p.intervenants.find(y=>y.id===b.dataset.id);if(await confirmBox("Retirer l'intervenant",`${esc(contact(x.contactId).name)||"Cet intervenant"} n'apparaîtra plus dans les présences.`,"Retirer",true)){p.intervenants=p.intervenants.filter(y=>y!==x);save();render()}break}
   }
 });
 document.addEventListener("input",e=>{
@@ -487,7 +529,8 @@ document.addEventListener("input",e=>{
   case"ptitle":pt.title=el.value;break;
   case"etext":en.text=el.value;break;
   case"caption":en.photos.find(x=>x.id===el.dataset.ph).caption=el.value;break;
-  case"int":p.intervenants.find(x=>x.id===el.dataset.id)[el.dataset.f]=el.value;break;
+  case"irole":p.intervenants.find(x=>x.id===el.dataset.id).role=el.value;break;
+  case"dirq":{S.view.dirq=el.value;const pos=el.selectionStart;render();const n=$("#dirq");n.focus();n.setSelectionRange(pos,pos);return}
   case"proj":p[el.dataset.f]=el.value;if(el.dataset.f!=="address"){$("#projSel").selectedOptions[0].textContent=p.code+" – "+p.name}break;
   default:return;
   }
@@ -503,7 +546,7 @@ document.addEventListener("change",async e=>{
   case"presence":pv.presence[el.dataset.id]=el.value;save();break;
   case"status":setStatus(pt,pv.idx,el.value);save();render();break;
   case"edate":en.date=el.value;save();break;
-  case"int":case"proj":render();break;
+  case"irole":case"proj":render();break;
   case"photos":{const files=[...el.files];if(!files.length)return;const done=busy(`Ajout de ${files.length} photo(s)…`);
     try{for(const f of files){const {blob}=await compress(f,1600,.82);const id="ph_"+uid();await putBlob(id,blob);en.photos.push({id,caption:""})}save()}catch(err){toast("Une photo n'a pas pu être lue.")}finally{done();render()}break}
   case"planfile":{const f=el.files[0];if(!f)return;const done=busy("Import du plan…");
@@ -525,7 +568,9 @@ function newProject(){
    <div class="acts"><button class="btn" data-x="0">Annuler</button><button class="btn primary" data-x="1">Créer avec PV01</button></div>`,(box,close)=>{
    box.querySelector('[data-x="0"]').onclick=close;
    box.querySelector('[data-x="1"]').onclick=()=>{const v=id=>box.querySelector(id).value.trim();const c=S.state.settings.company;
-     const me={id:uid(),civ:"Mme",name:c.name||"",role:"STAB",fonction:"BE stabilité",tel:c.tel||"",email:c.email||""};
+     let mc=S.state.contacts.find(x=>c.email&&(x.email||"").toLowerCase()===c.email.toLowerCase())||S.state.contacts.find(x=>c.name&&x.name===c.name);
+     if(!mc){mc={id:uid(),civ:"Mme",name:c.name||"",fonction:"BE stabilité",tel:c.tel||"",email:c.email||""};S.state.contacts.push(mc)}
+     const me={id:uid(),contactId:mc.id,role:"STAB",diffusion:false};
      const p={id:uid(),code:v("#np-code")||"Sans n°",name:v("#np-name")||"Nouveau chantier",address:v("#np-addr"),mission:v("#np-mis")||"Stabilité",intervenants:[me],plans:[],points:[],
        pvs:[{id:uid(),idx:1,date:today(),status:"draft",issuedAt:null,presence:{[me.id]:"Présente"},avancement:"",documents:""}]};
      S.state.projects.push(p);S.state.currentProjectId=p.id;S.view={...S.view,tab:"pv",pvIdx:1,planId:null,placing:null};save();close();render()}});
@@ -547,7 +592,7 @@ function settings(){
    box.querySelector("#sc-exp").onclick=async()=>{const done=busy("Préparation de la sauvegarde…");try{const b=await exportBundle();await saveFile(`pv-chantier-sauvegarde-${today()}.json`,new Blob([JSON.stringify(b)],{type:"application/json"}))}finally{done()}};
    box.querySelector("#sc-imp").onchange=async ev=>{const f=ev.target.files[0];if(!f)return;
      if(!await confirmBox("Importer la sauvegarde","Toutes les données actuelles de cet appareil seront remplacées par celles du fichier.","Remplacer",true))return;
-     const done=busy("Import…");try{await importBundle(JSON.parse(await f.text()));save();close();S.view.pvIdx=null;render();toast("Sauvegarde importée")}catch(err){toast("Ce fichier n'est pas une sauvegarde valide.")}finally{done()}};
+     const done=busy("Import…");try{await importBundle(JSON.parse(await f.text()));migrate(S.state);save();close();S.view.pvIdx=null;render();toast("Sauvegarde importée")}catch(err){toast("Ce fichier n'est pas une sauvegarde valide.")}finally{done()}};
    try{navigator.storage.estimate().then(u=>{box.querySelector("#sc-usage").textContent=`Espace utilisé : ${(u.usage/1048576).toFixed(1)} Mo.`})}catch(e){}
   });
 }
@@ -615,7 +660,7 @@ async function buildPDF(p,pv){
     const rowH=(cells,b)=>{font(0,b?"bold":"normal",8.5);return Math.max(...cells.map((c,k)=>doc.splitTextToSize(T(c),cols[k][1]-2.4).length))*LH(8.5)+2.6};
     const row=(cells,bold)=>{const h=rowH(cells,bold);need(h);let x=L;doc.setDrawColor(60);doc.setLineWidth(.2);cells.forEach((c,k)=>{font(0,bold||k===0?"bold":"normal",8.5);doc.rect(x,y,cols[k][1],h);doc.text(doc.splitTextToSize(T(c),cols[k][1]-2.4),x+1.2,y+1.3+LH(8.5)*.75);x+=cols[k][1]});y+=h};
     row(cols.map(c=>c[0]),true);
-    p.intervenants.forEach(x=>row([`${x.civ} ${x.name}`.trim(),x.role,x.fonction,x.tel,x.email,pv.presence[x.id]||"—"]));
+    ivs(p).forEach(x=>row([`${x.civ} ${x.name}`.trim(),x.role,x.fonction,x.tel,x.email,pv.presence[x.id]||"—"]));
     y+=6;}
   H1("Avancement chantier");para(pv.avancement||"—");y+=6;
 
@@ -694,6 +739,7 @@ async function buildPDF(p,pv){
 /* ---------- démarrage ---------- */
 (async()=>{
   await loadAll();
+  migrate(S.state);save();
   if(S.state.projects.length&&!P())S.state.currentProjectId=S.state.projects[0].id;
   render();
   try{if(!window.claude&&"serviceWorker" in navigator&&/^https?:/.test(location.protocol))navigator.serviceWorker.register("sw.js").catch(()=>{})}catch(e){}
